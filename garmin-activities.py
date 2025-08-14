@@ -30,32 +30,32 @@ ACTIVITY_ICONS = {
     # Add more mappings as needed
 }
 
- # def get_all_activities(garmin, limit=1000):
- #    return garmin.get_activities(0, limit)
+  def get_all_activities(garmin, limit=25):
+     return garmin.get_activities(0, limit)
 
-def get_all_activities(garmin, chunk_size=100):
-    """
-    Retorna totes les activitats de Garmin Connect.
-    Va fent crides en blocs de 'chunk_size' fins que no queden més activitats.
+#def get_all_activities(garmin, chunk_size=100):
+ #   """
+  #  Retorna totes les activitats de Garmin Connect.
+   # Va fent crides en blocs de 'chunk_size' fins que no queden més activitats.
     
-    :param garmin: objecte de connexió a Garmin Connect
-    :param chunk_size: nombre d'activitats per demanar en cada crida
-    :return: llista amb totes les activitats
-    """
-    all_activities = []
-    start = 0
+    #:param garmin: objecte de connexió a Garmin Connect
+    #:param chunk_size: nombre d'activitats per demanar en cada crida
+    #:return: llista amb totes les activitats
+    #"""
+    #all_activities = []
+    #start = 0
 
-    while True:
+    #while True:
         # Obtenim un bloc d'activitats
-        activities = garmin.get_activities(start, chunk_size)
+     #   activities = garmin.get_activities(start, chunk_size)
 
-        if not activities:  # Si no n'hi ha més, sortim del bucle
-            break
+      #  if not activities:  # Si no n'hi ha més, sortim del bucle
+       #     break
 
-        all_activities.extend(activities)  # Afegim les activitats obtingudes
-        start += chunk_size  # Avancem al següent bloc
+        #all_activities.extend(activities)  # Afegim les activitats obtingudes
+        #start += chunk_size  # Avancem al següent bloc
 
-    return all_activities
+   # return all_activities
 
 def format_activity_type(activity_type, activity_name=""):
     # First format the activity type as before
