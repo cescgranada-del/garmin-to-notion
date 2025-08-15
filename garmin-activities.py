@@ -30,7 +30,7 @@ ACTIVITY_ICONS = {
     # Add more mappings as needed
 }
 
-  def get_all_activities(garmin, limit=1000):
+  def get_all_activities(garmin, limit=100):
      return garmin.get_activities(0, limit)
 
 #def get_all_activities(garmin, chunk_size=100):
