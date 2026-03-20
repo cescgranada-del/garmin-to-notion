@@ -1,117 +1,143 @@
-from datetime import date, timedelta
+import os
+import shutil
 from garminconnect import Garmin
 from notion_client import Client
 from dotenv import load_dotenv
-import os
 
-def get_all_daily_steps(garmin):
-    """
-    Get last x days of daily step count data from Garmin Connect.
-    """
-    startdate = date.today() - timedelta(days=1)
-    daterange = [startdate + timedelta(days=x) 
-                 for x in range((date.today() - startdate).days)] # excl. today
-    daily_steps = []
-    for d in daterange:
-        daily_steps += garmin.get_daily_steps(d.isoformat(), d.isoformat())
-    return daily_steps
+# Nota: He eliminat pytz i timezone perquè utilitzarem startTimeLocal directe de Garmin
 
-def daily_steps_exist(client, database_id, activity_date):
-    """
-    Check if daily step count already exists in the Notion database.
-    """
+ACTIVITY_ICONS = {
+    "Barre": "https://img.icons8.com/?size=100&id=66924&format=png&color=000000",
+    "Breathwork": "https://img.icons8.com/?size=100&id=9798&format=png&color=000000",
+    "Cardio": "https://img.icons8.com/?size=100&id=71221&format=png&color=000000",
+    "Cycling": "https://img.icons8.com/?size=100&id=47443&format=png&color=000000",
+    "Hiking": "https://img.icons8.com/?size=100&id=9844&format=png&color=000000",
+    "Indoor Cardio": "https://img.icons8.com/?size=100&id=62779&format=png&color=000000",
+    "Indoor Cycling": "https://img.icons8.com/?size=100&id=47443&format=png&color=000000",
+    "Indoor Rowing": "https://img.icons8.com/?size=100&id=71098&format=png&color=000000",
+    "Pilates": "https://img.icons8.com/?size=100&id=9774&format=png&color=000000",
+    "Meditation": "https://img.icons8.com/?size=100&id=9798&format=png&color=000000",
+    "Rowing": "https://img.icons8.com/?size=100&id=71491&format=png&color=000000",
+    "Running": "https://img.icons8.com/?size=100&id=k1l1XFkME39t&format=png&color=000000",
+    "Strength Training": "https://img.icons8.com/?size=100&id=107640&format=png&color=000000",
+    "Stretching": "https://img.icons8.com/?size=100&id=djfOcRn1m_kh&format=png&color=000000",
+    "Swimming": "https://img.icons8.com/?size=100&id=9777&format=png&color=000000",
+    "Treadmill Running": "https://img.icons8.com/?size=100&id=9794&format=png&color=000000",
+    "Walking": "https://img.icons8.com/?size=100&id=9807&format=png&color=000000",
+    "Yoga": "https://img.icons8.com/?size=100&id=9783&format=png&color=000000",
+}
+
+def get_all_activities(garmin, limit=10):
+    return garmin.get_activities(0, limit)
+
+def format_activity_type(activity_type, activity_name=""):
+    if not activity_type:
+        return "Unknown", "Unknown"
+        
+    formatted_type = activity_type.replace('_', ' ').title()
+    activity_subtype = formatted_type
+    activity_type_res = formatted_type
+
+    activity_mapping = {
+        "Barre": "Strength",
+        "Indoor Cardio": "Cardio",
+        "Indoor Cycling": "Cycling",
+        "Indoor Rowing": "Rowing",
+        "Speed Walking": "Walking",
+        "Strength Training": "Strength",
+        "Treadmill Running": "Running"
+    }
+
+    if formatted_type == "Rowing V2":
+        activity_type_res = "Rowing"
+    elif formatted_type in ["Yoga", "Pilates"]:
+        activity_type_res = "Yoga/Pilates"
+        activity_subtype = formatted_type
+
+    if formatted_type in activity_mapping:
+        activity_type_res = activity_mapping[formatted_type]
+        activity_subtype = formatted_type
+
+    if activity_name and "meditation" in activity_name.lower():
+        return "Meditation", "Meditation"
+    if activity_name and "barre" in activity_name.lower():
+        return "Strength", "Barre"
+    if activity_name and "stretch" in activity_name.lower():
+        return "Stretching", "Stretching"
+    
+    return activity_type_res, activity_subtype
+
+def format_entertainment(activity_name):
+    if not activity_name:
+        return "Unnamed Activity"
+    return activity_name.replace('ENTERTAINMENT', 'Netflix')
+
+def format_training_message(message):
+    if not message:
+        return 'Unknown'
+        
+    messages = {
+        'NO_': 'No Benefit',
+        'MINOR_': 'Some Benefit',
+        'RECOVERY_': 'Recovery',
+        'MAINTAINING_': 'Maintaining',
+        'IMPROVING_': 'Impacting',
+        'IMPACTING_': 'Impacting',
+        'HIGHLY_': 'Highly Impacting',
+        'OVERREACHING_': 'Overreaching'
+    }
+    for key, value in messages.items():
+        if message.startswith(key):
+            return value
+    return message
+
+def format_training_effect(label):
+    if not label:
+        return 'Unknown'
+    return label.replace('_', ' ').title()
+
+def format_pace(average_speed):
+    if average_speed and average_speed > 0:
+        pace_min_km = 1000 / (average_speed * 60)
+        minutes = int(pace_min_km)
+        seconds = int((pace_min_km - minutes) * 60)
+        return f"{minutes}:{seconds:02d} min/km"
+    return "0:00 min/km"
+
+# --- FUNCIONS AUXILIARS PER LLEGIR NOTION SENSE ERRORS ---
+def get_notion_number(prop):
+    if prop and 'number' in prop and prop['number'] is not None:
+        return prop['number']
+    return 0
+
+def get_notion_select(prop):
+    if prop and 'select' in prop and prop['select'] is not None:
+        return prop['select'].get('name', 'Unknown')
+    return "Unknown"
+
+def get_notion_rich_text(prop):
+    try:
+        return prop['rich_text'][0]['text']['content']
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+def get_notion_title(prop):
+    try:
+        return prop['title'][0]['text']['content']
+    except (KeyError, IndexError, TypeError):
+        return ""
+# ---------------------------------------------------------
+
+def activity_exists(client, database_id, activity_date, activity_type, activity_name):
+    if not activity_date:
+        return None
+
+    # Agafem només la data YYYY-MM-DD
+    date_only = activity_date[:10]
+    lookup_type = "Stretching" if activity_name and "stretch" in activity_name.lower() else activity_type
+    
+    # Ja no busquem per nom per evitar duplicats si canvies el nom al Garmin
     query = client.databases.query(
         database_id=database_id,
         filter={
-            "and": [
-                {"property": "Date", "date": {"equals": activity_date}},
-                {"property": "Activity Type", "title": {"equals": "Walking"}}
-            ]
-        }
-    )
-    results = query['results']
-    return results[0] if results else None
-
-def steps_need_update(existing_steps, new_steps):
-    """
-    Compare existing steps data with imported data to determine if an update is needed.
-    """
-    existing_props = existing_steps['properties']
-    activity_type = "Walking"
-    
-    return (
-        existing_props['Total Steps']['number'] != new_steps.get('totalSteps') or
-        existing_props['Step Goal']['number'] != new_steps.get('stepGoal') or
-        existing_props['Total Distance (km)']['number'] != new_steps.get('totalDistance') or
-        existing_props['Activity Type']['title'] != activity_type
-    )
-
-def update_daily_steps(client, existing_steps, new_steps):
-    """
-    Update an existing daily steps entry in the Notion database with new data.
-    """
-    total_distance = new_steps.get('totalDistance')
-    if total_distance is None:
-        total_distance = 0
-    properties = {
-        "Activity Type":  {"title": [{"text": {"content": "Walking"}}]},
-        "Total Steps": {"number": new_steps.get('totalSteps')},
-        "Step Goal": {"number": new_steps.get('stepGoal')},
-        "Total Distance (km)": {"number": round(total_distance / 1000, 2)}
-    }
-    
-    update = {
-        "page_id": existing_steps['id'],
-        "properties": properties,
-    }
-        
-    client.pages.update(**update)
-
-def create_daily_steps(client, database_id, steps):
-    """
-    Create a new daily steps entry in the Notion database.
-    """
-    total_distance = steps.get('totalDistance')
-    if total_distance is None:
-        total_distance = 0
-    properties = {
-        "Activity Type": {"title": [{"text": {"content": "Walking"}}]},
-        "Date": {"date": {"start": steps.get('calendarDate')}},
-        "Total Steps": {"number": steps.get('totalSteps')},
-        "Step Goal": {"number": steps.get('stepGoal')},
-        "Total Distance (km)": {"number": round(total_distance / 1000, 2)}
-    }
-    
-    page = {
-        "parent": {"database_id": database_id},
-        "properties": properties,
-    }
-    
-    client.pages.create(**page)
-
-def main():
-    load_dotenv()
-
-    # Initialize Garmin and Notion clients using environment variables
-    garmin_email = os.getenv("GARMIN_EMAIL")
-    garmin_password = os.getenv("GARMIN_PASSWORD")
-    notion_token = os.getenv("NOTION_TOKEN")
-    database_id = os.getenv("NOTION_STEPS_DB_ID")
-
-    # Initialize Garmin client and login
-    garmin = Garmin(garmin_email, garmin_password)
-    garmin.login()
-    client = Client(auth=notion_token)
-
-    daily_steps = get_all_daily_steps(garmin)
-    for steps in daily_steps:
-        steps_date = steps.get('calendarDate')
-        existing_steps = daily_steps_exist(client, database_id, steps_date)
-        if existing_steps:
-            if steps_need_update(existing_steps, steps):
-                update_daily_steps(client, existing_steps, steps)
-        else:
-            create_daily_steps(client, database_id, steps)
-
-if __name__ == '__main__':
-    main()
+            "and":
