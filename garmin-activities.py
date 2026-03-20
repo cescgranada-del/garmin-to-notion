@@ -34,7 +34,10 @@ def get_all_activities(garmin, limit=10):
     return garmin.get_activities(0, limit)
 
 def format_activity_type(activity_type, activity_name=""):
-    formatted_type = activity_type.replace('_', ' ').title() if activity_type else "Unknown"
+    if not activity_type:
+        return "Unknown", "Unknown"
+        
+    formatted_type = activity_type.replace('_', ' ').title()
     activity_subtype = formatted_type
     activity_type_res = formatted_type
 
@@ -68,9 +71,14 @@ def format_activity_type(activity_type, activity_name=""):
     return activity_type_res, activity_subtype
 
 def format_entertainment(activity_name):
+    if not activity_name:
+        return "Unnamed Activity"
     return activity_name.replace('ENTERTAINMENT', 'Netflix')
 
 def format_training_message(message):
+    if not message:
+        return 'Unknown'
+        
     messages = {
         'NO_': 'No Benefit',
         'MINOR_': 'Some Benefit',
@@ -87,23 +95,41 @@ def format_training_message(message):
     return message
 
 def format_training_effect(label):
+    if not label:
+        return 'Unknown'
     return label.replace('_', ' ').title()
 
 def format_pace(average_speed):
-    if average_speed > 0:
+    if average_speed and average_speed > 0:
         pace_min_km = 1000 / (average_speed * 60)
         minutes = int(pace_min_km)
         seconds = int((pace_min_km - minutes) * 60)
         return f"{minutes}:{seconds:02d} min/km"
-    return ""
+    return "0:00 min/km"
+
+# --- FUNCIONS AUXILIARS PER LLEGIR NOTION SENSE ERRORS ---
+def get_notion_number(prop):
+    if prop and 'number' in prop and prop['number'] is not None:
+        return prop['number']
+    return 0
+
+def get_notion_select(prop):
+    if prop and 'select' in prop and prop['select'] is not None:
+        return prop['select'].get('name', 'Unknown')
+    return "Unknown"
+
+def get_notion_rich_text(prop):
+    try:
+        return prop['rich_text'][0]['text']['content']
+    except (KeyError, IndexError, TypeError):
+        return ""
+# ---------------------------------------------------------
 
 def activity_exists(client, database_id, activity_date, activity_type, activity_name):
-    if isinstance(activity_type, tuple):
-        main_type = activity_type[0]
-    else:
-        main_type = activity_type
+    if not activity_date:
+        return None
 
-    lookup_type = "Stretching" if "stretch" in activity_name.lower() else main_type
+    lookup_type = "Stretching" if activity_name and "stretch" in activity_name.lower() else activity_type
     
     query = client.databases.query(
         database_id=database_id,
@@ -133,26 +159,29 @@ def activity_needs_update(existing_activity, new_activity):
     )
     
     return (
-        existing_props['Distance (km)']['number'] != round(new_activity.get('distance', 0) / 1000, 2) or
-        existing_props['Duration (min)']['number'] != round(new_activity.get('duration', 0) / 60, 2) or
-        existing_props['Calories']['number'] != round(new_activity.get('calories', 0)) or
-        existing_props['Avg Pace']['rich_text'][0]['text']['content'] != format_pace(new_activity.get('averageSpeed', 0)) or
-        existing_props['Avg Power']['number'] != round(new_activity.get('avgPower', 0), 1) or
-        existing_props['Max Power']['number'] != round(new_activity.get('maxPower', 0), 1) or
-        existing_props['Training Effect']['select']['name'] != format_training_effect(new_activity.get('trainingEffectLabel', 'Unknown')) or
-        existing_props['Aerobic']['number'] != round(new_activity.get('aerobicTrainingEffect', 0), 1) or
-        existing_props['Aerobic Effect']['select']['name'] != format_training_message(new_activity.get('aerobicTrainingEffectMessage', 'Unknown')) or
-        existing_props['Anaerobic']['number'] != round(new_activity.get('anaerobicTrainingEffect', 0), 1) or
-        existing_props['Anaerobic Effect']['select']['name'] != format_training_message(new_activity.get('anaerobicTrainingEffectMessage', 'Unknown')) or
-        existing_props['PR']['checkbox'] != new_activity.get('pr', False) or
-        existing_props['Fav']['checkbox'] != new_activity.get('favorite', False) or
-        existing_props['Activity Type']['select']['name'] != activity_type or
-        (has_subactivity and existing_props['Subactivity Type']['select']['name'] != activity_subtype) or
+        get_notion_number(existing_props.get('Distance (km)')) != round(new_activity.get('distance', 0) / 1000, 2) or
+        get_notion_number(existing_props.get('Duration (min)')) != round(new_activity.get('duration', 0) / 60, 2) or
+        get_notion_number(existing_props.get('Calories')) != round(new_activity.get('calories', 0)) or
+        get_notion_rich_text(existing_props.get('Avg Pace')) != format_pace(new_activity.get('averageSpeed', 0)) or
+        get_notion_number(existing_props.get('Avg Power')) != round(new_activity.get('avgPower', 0), 1) or
+        get_notion_number(existing_props.get('Max Power')) != round(new_activity.get('maxPower', 0), 1) or
+        get_notion_select(existing_props.get('Training Effect')) != format_training_effect(new_activity.get('trainingEffectLabel', 'Unknown')) or
+        get_notion_number(existing_props.get('Aerobic')) != round(new_activity.get('aerobicTrainingEffect', 0), 1) or
+        get_notion_select(existing_props.get('Aerobic Effect')) != format_training_message(new_activity.get('aerobicTrainingEffectMessage', 'Unknown')) or
+        get_notion_number(existing_props.get('Anaerobic')) != round(new_activity.get('anaerobicTrainingEffect', 0), 1) or
+        get_notion_select(existing_props.get('Anaerobic Effect')) != format_training_message(new_activity.get('anaerobicTrainingEffectMessage', 'Unknown')) or
+        existing_props.get('PR', {}).get('checkbox', False) != new_activity.get('pr', False) or
+        existing_props.get('Fav', {}).get('checkbox', False) != new_activity.get('favorite', False) or
+        get_notion_select(existing_props.get('Activity Type')) != activity_type or
+        (has_subactivity and get_notion_select(existing_props.get('Subactivity Type')) != activity_subtype) or
         (not has_subactivity)
     )
 
 def create_activity(client, database_id, activity):
     activity_date = activity.get('startTimeGMT')
+    if not activity_date:
+        return # Evita crear activitats sense data vàlida
+        
     activity_name = format_entertainment(activity.get('activityName', 'Unnamed Activity'))
     activity_type, activity_subtype = format_activity_type(
         activity.get('activityType', {}).get('typeKey', 'Unknown'),
@@ -170,15 +199,15 @@ def create_activity(client, database_id, activity):
         "Duration (min)": {"number": round(activity.get('duration', 0) / 60, 2)},
         "Calories": {"number": round(activity.get('calories', 0))},
         "Avg Pace": {"rich_text": [{"text": {"content": format_pace(activity.get('averageSpeed', 0))}}]},
-        "Avg Power": {"number": round(activity.get('avgPower', 0), 1)},
-        "Max Power": {"number": round(activity.get('maxPower', 0), 1)},
+        "Avg Power": {"number": round(activity.get('avgPower', 0) or 0, 1)},
+        "Max Power": {"number": round(activity.get('maxPower', 0) or 0, 1)},
         "Training Effect": {"select": {"name": format_training_effect(activity.get('trainingEffectLabel', 'Unknown'))}},
-        "Aerobic": {"number": round(activity.get('aerobicTrainingEffect', 0), 1)},
+        "Aerobic": {"number": round(activity.get('aerobicTrainingEffect', 0) or 0, 1)},
         "Aerobic Effect": {"select": {"name": format_training_message(activity.get('aerobicTrainingEffectMessage', 'Unknown'))}},
-        "Anaerobic": {"number": round(activity.get('anaerobicTrainingEffect', 0), 1)},
+        "Anaerobic": {"number": round(activity.get('anaerobicTrainingEffect', 0) or 0, 1)},
         "Anaerobic Effect": {"select": {"name": format_training_message(activity.get('anaerobicTrainingEffectMessage', 'Unknown'))}},
-        "PR": {"checkbox": activity.get('pr', False)},
-        "Fav": {"checkbox": activity.get('favorite', False)}
+        "PR": {"checkbox": bool(activity.get('pr', False))},
+        "Fav": {"checkbox": bool(activity.get('favorite', False))}
     }
     
     page = {"parent": {"database_id": database_id}, "properties": properties}
@@ -188,7 +217,7 @@ def create_activity(client, database_id, activity):
     client.pages.create(**page)
 
 def update_activity(client, existing_activity, new_activity):
-    activity_name = new_activity.get('activityName', 'Unnamed Activity')
+    activity_name = format_entertainment(new_activity.get('activityName', 'Unnamed Activity'))
     activity_type, activity_subtype = format_activity_type(
         new_activity.get('activityType', {}).get('typeKey', 'Unknown'),
         activity_name
@@ -203,15 +232,15 @@ def update_activity(client, existing_activity, new_activity):
         "Duration (min)": {"number": round(new_activity.get('duration', 0) / 60, 2)},
         "Calories": {"number": round(new_activity.get('calories', 0))},
         "Avg Pace": {"rich_text": [{"text": {"content": format_pace(new_activity.get('averageSpeed', 0))}}]},
-        "Avg Power": {"number": round(new_activity.get('avgPower', 0), 1)},
-        "Max Power": {"number": round(new_activity.get('maxPower', 0), 1)},
+        "Avg Power": {"number": round(new_activity.get('avgPower', 0) or 0, 1)},
+        "Max Power": {"number": round(new_activity.get('maxPower', 0) or 0, 1)},
         "Training Effect": {"select": {"name": format_training_effect(new_activity.get('trainingEffectLabel', 'Unknown'))}},
-        "Aerobic": {"number": round(new_activity.get('aerobicTrainingEffect', 0), 1)},
+        "Aerobic": {"number": round(new_activity.get('aerobicTrainingEffect', 0) or 0, 1)},
         "Aerobic Effect": {"select": {"name": format_training_message(new_activity.get('aerobicTrainingEffectMessage', 'Unknown'))}},
-        "Anaerobic": {"number": round(new_activity.get('anaerobicTrainingEffect', 0), 1)},
+        "Anaerobic": {"number": round(new_activity.get('anaerobicTrainingEffect', 0) or 0, 1)},
         "Anaerobic Effect": {"select": {"name": format_training_message(new_activity.get('anaerobicTrainingEffectMessage', 'Unknown'))}},
-        "PR": {"checkbox": new_activity.get('pr', False)},
-        "Fav": {"checkbox": new_activity.get('favorite', False)}
+        "PR": {"checkbox": bool(new_activity.get('pr', False))},
+        "Fav": {"checkbox": bool(new_activity.get('favorite', False))}
     }
     
     update = {"page_id": existing_activity['id'], "properties": properties}
@@ -227,16 +256,13 @@ def main():
     notion_token = os.getenv("NOTION_TOKEN")
     database_id = os.getenv("NOTION_DB_ID")
 
-    # Gestió de tokens per a GitHub Actions
     token_store = ".garminconnect"
     
     try:
-        # Intentem login normal amb memòria de sessió
         garmin = Garmin(garmin_email, garmin_password, is_cn=False)
         garmin.login(token_store)
     except Exception as e:
         print(f"Sessió corrupta o error de login, reintentant de zero: {e}")
-        # Si hi ha error d'OAuth, esborrem el directori de sessió i forcem login pur
         if os.path.exists(token_store):
             shutil.rmtree(token_store, ignore_errors=True)
         
