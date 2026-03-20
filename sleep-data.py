@@ -1,16 +1,12 @@
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 from garminconnect import Garmin
 from notion_client import Client
-from dotenv import load_dotenv, dotenv_values
+from dotenv import load_dotenv
 import pytz
-import os
 
-# Constants
+# Configuració de zona horària
 local_tz = pytz.timezone("Europe/Madrid")
-
-# Load environment variables
-load_dotenv()
-CONFIG = dotenv_values()
 
 def get_sleep_data(garmin):
     today = datetime.today().date()
@@ -21,10 +17,10 @@ def format_duration(seconds):
     return f"{minutes // 60}h {minutes % 60}m"
 
 def format_time(timestamp):
-    return (
-        datetime.utcfromtimestamp(timestamp / 1000).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        if timestamp else None
-    )
+    # Utilitzem la sintaxi moderna de timezone en lloc del mètode obsolet utcfromtimestamp
+    if not timestamp:
+        return None
+    return datetime.fromtimestamp(timestamp / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 def format_time_readable(timestamp):
     return (
@@ -41,63 +37,35 @@ def sleep_data_exists(client, database_id, sleep_date):
         filter={"property": "Long Date", "date": {"equals": sleep_date}}
     )
     results = query.get('results', [])
-    return results[0] if results else None  # Ensure it returns None instead of causing IndexError
+    return results[0] if results else None 
 
-def create_sleep_data(client, database_id, sleep_data, skip_zero_sleep=True):
+def build_sleep_properties(sleep_data):
+    """Construeix el diccionari de propietats per a Notion (evita repetir codi)"""
     daily_sleep = sleep_data.get('dailySleepDTO', {})
     if not daily_sleep:
-        return
+        return None, 0
     
     sleep_date = daily_sleep.get('calendarDate', "Unknown Date")
     total_sleep = sum(
         (daily_sleep.get(k, 0) or 0) for k in ['deepSleepSeconds', 'lightSleepSeconds', 'remSleepSeconds']
     )
+
+    # Protecció contra el None a les dates
+    start_time = format_time(daily_sleep.get('sleepStartTimestampGMT'))
+    end_time = format_time(daily_sleep.get('sleepEndTimestampGMT'))
     
-    
-    if skip_zero_sleep and total_sleep == 0:
-        print(f"Skipping sleep data for {sleep_date} as total sleep is 0")
-        return
+    date_obj = {}
+    if start_time:
+        date_obj["start"] = start_time
+    if end_time:
+        date_obj["end"] = end_time
 
     properties = {
         "Date": {"title": [{"text": {"content": format_date_for_name(sleep_date)}}]},
         "Times": {"rich_text": [{"text": {"content": f"{format_time_readable(daily_sleep.get('sleepStartTimestampGMT'))} → {format_time_readable(daily_sleep.get('sleepEndTimestampGMT'))}"}}]},
         "Long Date": {"date": {"start": sleep_date}},
-        "Full Date/Time": {"date": {"start": format_time(daily_sleep.get('sleepStartTimestampGMT')), "end": format_time(daily_sleep.get('sleepEndTimestampGMT'))}},
         "Total Sleep (h)": {"number": round(total_sleep / 3600, 1)},
         "Light Sleep (h)": {"number": round(daily_sleep.get('lightSleepSeconds', 0) / 3600, 1)},
         "Deep Sleep (h)": {"number": round(daily_sleep.get('deepSleepSeconds', 0) / 3600, 1)},
         "REM Sleep (h)": {"number": round(daily_sleep.get('remSleepSeconds', 0) / 3600, 1)},
-        "Awake Time (h)": {"number": round(daily_sleep.get('awakeSleepSeconds', 0) / 3600, 1)},
-        "Total Sleep": {"rich_text": [{"text": {"content": format_duration(total_sleep)}}]},
-        "Light Sleep": {"rich_text": [{"text": {"content": format_duration(daily_sleep.get('lightSleepSeconds', 0))}}]},
-        "Deep Sleep": {"rich_text": [{"text": {"content": format_duration(daily_sleep.get('deepSleepSeconds', 0))}}]},
-        "REM Sleep": {"rich_text": [{"text": {"content": format_duration(daily_sleep.get('remSleepSeconds', 0))}}]},
-        "Awake Time": {"rich_text": [{"text": {"content": format_duration(daily_sleep.get('awakeSleepSeconds', 0))}}]},
-        "Resting HR": {"number": sleep_data.get('restingHeartRate', 0)}
-    }
-    
-    client.pages.create(parent={"database_id": database_id}, properties=properties, icon={"emoji": "😴"})
-    print(f"Created sleep entry for: {sleep_date}")
-
-def main():
-    load_dotenv()
-
-    # Initialize Garmin and Notion clients using environment variables
-    garmin_email = os.getenv("GARMIN_EMAIL")
-    garmin_password = os.getenv("GARMIN_PASSWORD")
-    notion_token = os.getenv("NOTION_TOKEN")
-    database_id = os.getenv("NOTION_SLEEP_DB_ID")
-
-    # Initialize Garmin client and login
-    garmin = Garmin(garmin_email, garmin_password)
-    garmin.login()
-    client = Client(auth=notion_token)
-
-    data = get_sleep_data(garmin)
-    if data:
-        sleep_date = data.get('dailySleepDTO', {}).get('calendarDate')
-        if sleep_date and not sleep_data_exists(client, database_id, sleep_date):
-            create_sleep_data(client, database_id, data, skip_zero_sleep=True)
-
-if __name__ == '__main__':
-    main()
+        "Awake Time (h)": {"number": round(daily_sleep.get('awakeSleepSeconds', 0) /
